@@ -162,7 +162,7 @@ Wad::Wad(const string &path) {
         string nodeName = start
             ? dname.substr(0, dname.size() - 6)  // strip "_START"
             : dname;
-        int    nodeSize = start ? 0 : d.size;
+        int nodeSize = start ? 0 : d.size;
 
         auto *node = new TreeNode(root, nodeName, nodeSize);
         root->addChild(node);
@@ -195,63 +195,90 @@ bool Wad::isContent(const std::string& path) {
     if (path.empty() || path == "/")
         return false;
 
-    auto parts = splitPath(const_cast<std::string&>(path));
-    std::string parentDir = getParentDir(parts);
-    if (!isDirectory(parentDir))
+    // Trim any trailing slash, then split
+    std::string p = path;
+    if (p.back() == '/') p.pop_back();
+    auto parts = splitPath(p);
+    if (parts.empty())
         return false;
 
-    for (auto &element : parts) {
-        if (element.find('.') != std::string::npos)
-            return true;
-    }
-    return false;
-}
-
-
-bool Wad::isDirectory(const string& const_path) {
-    auto parts = splitPath(const_cast<string&>(const_path));
+    // Must exist in the in‐memory tree
     TreeNode* node = TreeNode::getNode(root, parts);
-    if (node == nullptr)
-      return false;
+    if (!node)
+        return false;
 
+    // Look up the exact descriptor by leaf name
+    const std::string &leaf = parts.back();
+    bool found = false;
+    for (auto &d : descripters) {
+        if (leaf == d.name) {
+            found = true;
+            break;
+        }
+    }
+    if (!found)
+        return false;
 
+    // Exclude namespace markers and map markers
+    if (isME(leaf)                  // “E#M#” map marker
+     || isSTART(leaf)             // “FOO_START”
+     || (leaf.size()>4 && leaf.substr(leaf.size()-4)== "_END"))  // “FOO_END”
+    {
+        return false;
+    }
 
-    for (char c : node->name)
-        if (c == '.') return false;
-
+    // Anything else with a matching descriptor is file content
     return true;
 }
 
-int Wad::getSize(const string &path) {
-    if(!isContent(path) || !isDirectory(path)) return -1;
 
-    auto parts = splitPath(const_cast<string&>(path));
-    TreeNode* node = TreeNode::getNode(root, parts);
-    return node->size;
+
+bool Wad::isDirectory(const std::string& path) {
+    if (path.empty()) return false;
+    if (path == "/")
+        return true;
+    if (isContent(path))
+        return false;
+
+    auto parts = splitPath(const_cast<std::string&>(path));
+    return TreeNode::getNode(root, parts) != nullptr;
 }
+
+
+int Wad::getSize(const std::string &path) {
+    if (!isContent(path))     // no longer check isDirectory
+        return -1;
+    auto parts = splitPath(const_cast<std::string&>(path));
+    TreeNode* node = TreeNode::getNode(root, parts);
+    return node ? node->size : -1;
+}
+
 
 // In libWad.h, inside class libWad:
 
-int Wad::getContents(const string &path, char *buffer, int length, int offset) {
-    // 1) Path must refer to content
-    if (path.empty() || path == "/") return -1;
-    if (!isContent(path)) return -1;
-    if (!isDirectory(path)) return -1;
+int Wad::getContents(const std::string &path,
+                     char *buffer,
+                     int length,
+                     int offset)
+{
+    // 1) path must be non‐empty and represent content
+    if (path.empty() || path == "/")     return -1;
+    if (!isContent(path))                return -1;
 
-    // 2) Locate the TreeNode and its size
-    auto parts = splitPath(const_cast<string&>(path));
+    // 2) locate the node & its size
+    auto parts = splitPath(const_cast<std::string&>(path));
     TreeNode* node = TreeNode::getNode(root, parts);
-    if (!node) return -1;
+    if (!node)                           return -1;
     int fileSize = node->size;
 
-    // 3) If offset past EOF, nothing to read
-    if (offset >= fileSize) return 0;
+    // 3) if offset past EOF, copy nothing
+    if (offset >= fileSize)              return 0;
 
-    // 4) Compute how many bytes to read
-    int toRead = min(length, fileSize - offset);
+    // 4) how many bytes can we actually read?
+    int toRead = std::min(length, fileSize - offset);
 
-    // 5) Find the matching LumpDesc
-    const string &leaf = parts.back();
+    // 5) find the descriptor for this lump
+    const std::string &leaf = parts.back();
     const LumpDesc *desc = nullptr;
     for (auto &d : descripters) {
         if (leaf == d.name) {
@@ -259,13 +286,14 @@ int Wad::getContents(const string &path, char *buffer, int length, int offset) {
             break;
         }
     }
-    if (!desc) return -1;
+    if (!desc)                           return -1;
 
-    // 6) Seek into the lump and read
+    // 6) seek & read
     file.seekg(desc->offset + offset, ios::beg);
     file.read(buffer, toRead);
     return toRead;
 }
+
 
 int Wad::getDirectory(const string &path, vector<string> *directory)
 {
@@ -295,8 +323,12 @@ void Wad::createDirectory(const string &path) {
     string newName = parts.back();
     if (newName.size() > 2) return;
 
-    string parentPath = getParentDir(parts);
-    if (!isDirectory(parentPath)) return;
+   string parentPath = getParentDir(parts);
+if (parentPath.empty())
+    parentPath = "/";                // ← assume root
+
+if (!isDirectory(parentPath))
+    return;
 
     auto parentParts = splitPath(parentPath);
     TreeNode* parent = TreeNode::getNode(root, parentParts);
@@ -347,6 +379,7 @@ void Wad::createDirectory(const string &path) {
         file.write(d.name,                            8);
     }
     file.flush();
+
 }
 
 void Wad::createFile(const string &path) {
@@ -362,10 +395,13 @@ void Wad::createFile(const string &path) {
     string newName = parts.back();
     // file names must fit in 8 chars
     if (newName.size() > 8) return;
-
+	if (isME(newName)) return;
     // 3) Parent must be a directory
-    string parentPath = getParentDir(parts);
-    if (!isDirectory(parentPath)) return;
+string parentPath = getParentDir(parts);
+    if (parentPath.empty())      // no parent means “/”
+        parentPath = "/";
+    if (!isDirectory(parentPath))
+        return;
     auto parentParts = splitPath(parentPath);
     TreeNode* parent = TreeNode::getNode(root, parentParts);
     if (!parent) return;
@@ -388,7 +424,6 @@ void Wad::createFile(const string &path) {
         }
     }
 
-    // 5) Build the new file descriptor (offset=0, size=0)
     LumpDesc d{0, 0, {0}};
     strncpy(d.name, newName.c_str(), 8);
 
@@ -414,8 +449,8 @@ void Wad::createFile(const string &path) {
 }
 
 int Wad::writeToFile(const string &path, const char *buffer, int length, int offset) {
-    // 1) Must refer to an existing file, not a directory
-    if (isDirectory(path)) return -1;
+    // 1) Path must refer to a file (even if it's zero‐length)
+   if (!isContent(path)) return -1;
     auto parts = splitPath(const_cast<string&>(path));
     TreeNode* node = TreeNode::getNode(root, parts);
     if (!node) return -1;

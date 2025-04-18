@@ -8,8 +8,13 @@ using namespace std;
 
 int main() {
     Wad *testWad = Wad::loadWad("sample1.wad");
-    Wad::printTree(testWad->getRoot());
-    cout << testWad->isContent("/Gl/ad/os/cake.jpg") << endl;
 
+    std::string testPath = "/Ex";
+    testWad->createDirectory(testPath);
+    testPath += "/ad";
+    testWad->createDirectory(testPath );
+    Wad::printTree(testWad->getRoot());
+
+    cout << testWad->isContent(testPath) << endl;
     return 0;
 }

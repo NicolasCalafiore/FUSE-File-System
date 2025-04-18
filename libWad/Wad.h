@@ -57,7 +57,7 @@ public:
     bool isDirectory(const std::string& const_path);
 
     int getSize(const std::string &path);
-
+	size_t findDescriptorIndexForPath(const std::vector<std::string>& parts);
     // In libWad.h, inside class libWad:
 
     int getContents(const std::string &path, char *buffer, int length, int offset = 0);
