@@ -36,6 +36,24 @@ vector<string> Wad::splitPath(string& path)
 
     return parts;
 }
+
+string Wad::getParentDirectory(string path){
+  if(path.empty() || path == "/")
+        return "";
+
+    vector<string> parts = Wad::splitPath(path);
+     return getParentDir(parts);
+}
+
+bool Wad::validParentDirectory(string path){
+  vector<string> parts = Wad::splitPath(path);
+  string parentDir = getParentDir(parts);
+  vector<string> parent_parts = Wad::splitPath(parentDir);
+  TreeNode* node = TreeNode::getNode(root, parent_parts);
+
+  return node != nullptr;
+}
+
 string Wad::getParentDir(vector<string> parts) {
     string parentDir = "";
     for (int i = 0; i < parts.size() - 1; ++i) {
@@ -95,7 +113,6 @@ int Wad::addMEToTree(int i, TreeNode *parent) {
         else if (isME(d.name)) {
             i = addMEToTree(i + 1, child);
         }
-        // otherwise just advance (k loop will also advance)
     }
     return i;
 }
@@ -115,18 +132,16 @@ int Wad::addStartEndToTree(int i, TreeNode *parent, const string &endTag){
         parent->addChild(child);
 
         if (start) {
-            // nested namespace
             i = addStartEndToTree(i + 1, child, generateEndElement(dname));
         }
         else if (isME(d.name)) {
-            // map marker inside a namespace
             i = addMEToTree(i + 1, child);
         }
         else {
             i++;
         }
            }
-    // skip over the matching _END descriptor
+
     return i + 1;
 }
 
@@ -168,15 +183,12 @@ Wad::Wad(const string &path) {
         root->addChild(node);
 
         if (start) {
-            // recurse until the matching _END
             i = addStartEndToTree(i + 1, node, generateEndElement(dname));
         }
         else if (isME(d.name)) {
-            // map marker: consumes next 10 entries (or until recursion unwinds)
             i = addMEToTree(i + 1, node);
         }
         else {
-            // plain file
             i++;
         }
     }
@@ -195,19 +207,16 @@ bool Wad::isContent(const std::string& path) {
     if (path.empty() || path == "/")
         return false;
 
-    // Trim any trailing slash, then split
     std::string p = path;
     if (p.back() == '/') p.pop_back();
     auto parts = splitPath(p);
     if (parts.empty())
         return false;
 
-    // Must exist in the in‐memory tree
     TreeNode* node = TreeNode::getNode(root, parts);
     if (!node)
         return false;
 
-    // Look up the exact descriptor by leaf name
     const std::string &leaf = parts.back();
     bool found = false;
     for (auto &d : descripters) {
@@ -219,15 +228,13 @@ bool Wad::isContent(const std::string& path) {
     if (!found)
         return false;
 
-    // Exclude namespace markers and map markers
-    if (isME(leaf)                  // “E#M#” map marker
-     || isSTART(leaf)             // “FOO_START”
+    if (isME(leaf)
+     || isSTART(leaf)
      || (leaf.size()>4 && leaf.substr(leaf.size()-4)== "_END"))  // “FOO_END”
     {
         return false;
     }
 
-    // Anything else with a matching descriptor is file content
     return true;
 }
 
@@ -246,7 +253,7 @@ bool Wad::isDirectory(const std::string& path) {
 
 
 int Wad::getSize(const std::string &path) {
-    if (!isContent(path))     // no longer check isDirectory
+    if (!isContent(path))
         return -1;
     auto parts = splitPath(const_cast<std::string&>(path));
     TreeNode* node = TreeNode::getNode(root, parts);
@@ -254,30 +261,22 @@ int Wad::getSize(const std::string &path) {
 }
 
 
-// In libWad.h, inside class libWad:
 
-int Wad::getContents(const std::string &path,
-                     char *buffer,
-                     int length,
-                     int offset)
+int Wad::getContents(const std::string &path, char *buffer, int length, int offset)
 {
-    // 1) path must be non‐empty and represent content
+
     if (path.empty() || path == "/")     return -1;
     if (!isContent(path))                return -1;
 
-    // 2) locate the node & its size
     auto parts = splitPath(const_cast<std::string&>(path));
     TreeNode* node = TreeNode::getNode(root, parts);
     if (!node)                           return -1;
     int fileSize = node->size;
 
-    // 3) if offset past EOF, copy nothing
     if (offset >= fileSize)              return 0;
 
-    // 4) how many bytes can we actually read?
     int toRead = std::min(length, fileSize - offset);
 
-    // 5) find the descriptor for this lump
     const std::string &leaf = parts.back();
     const LumpDesc *desc = nullptr;
     for (auto &d : descripters) {
@@ -288,7 +287,6 @@ int Wad::getContents(const std::string &path,
     }
     if (!desc)                           return -1;
 
-    // 6) seek & read
     file.seekg(desc->offset + offset, ios::beg);
     file.read(buffer, toRead);
     return toRead;
@@ -325,7 +323,7 @@ void Wad::createDirectory(const string &path) {
 
    string parentPath = getParentDir(parts);
 if (parentPath.empty())
-    parentPath = "/";                // ← assume root
+    parentPath = "/";
 
 if (!isDirectory(parentPath))
     return;
@@ -350,28 +348,23 @@ if (!isDirectory(parentPath))
         }
     }
 
-    // 5) Build the two new namespace markers
     LumpDesc startD{0,0,{0}};
     strncpy(startD.name, (newName + "_START").c_str(), 8);
     LumpDesc   endD{0,0,{0}};
     strncpy(  endD.name, (newName + "_END"  ).c_str(), 8);
 
-    // insert them and bump the count
     descripters.insert(descripters.begin() + insertIdx, startD);
     descripters.insert(descripters.begin() + insertIdx + 1, endD);
     numberOfDescripters += 2;
 
-    // 6) Update the in‐memory TreeNode
     auto *dirNode = new TreeNode(parent, newName, /*size=*/0);
     parent->addChild(dirNode);
 
-    // 7) Persist to disk:
-    //    Rewrite header (magic + count + offset)
     file.seekp(0, ios::beg);
     file.write(magic, 4);
     file.write(reinterpret_cast<char*>(&numberOfDescripters), sizeof(numberOfDescripters));
     file.write(reinterpret_cast<char*>(&FlatLumpDescriptors), sizeof(FlatLumpDescriptors));
-    //    Then rewrite the whole descriptor array at FlatLumpDescriptors
+
     file.seekp(FlatLumpDescriptors, ios::beg);
     for (auto &d : descripters) {
         file.write(reinterpret_cast<char*>(&d.offset), 4);
@@ -383,36 +376,30 @@ if (!isDirectory(parentPath))
 }
 
 void Wad::createFile(const string &path) {
-    // 1) Basic sanity checks
+
     if (path.empty() || path == "/") return;
     string p = path;
     if (p.back() == '/') p.pop_back();
     if (p.front() != '/') return;
 
-    // 2) Split into parent + newName
     auto parts   = splitPath(p);
     if (parts.empty()) return;
     string newName = parts.back();
-    // file names must fit in 8 chars
     if (newName.size() > 8) return;
 	if (isME(newName)) return;
-    // 3) Parent must be a directory
 string parentPath = getParentDir(parts);
-    if (parentPath.empty())      // no parent means “/”
+    if (parentPath.empty())
         parentPath = "/";
     if (!isDirectory(parentPath))
         return;
     auto parentParts = splitPath(parentPath);
     TreeNode* parent = TreeNode::getNode(root, parentParts);
     if (!parent) return;
-    // cannot drop new files in a map marker
     if (isME(parent->name)) return;
-    // no duplicate in parent
     for (auto *c : parent->children)
         if (c->name == newName)
             return;
 
-    // 4) Find where to insert in the descriptor list
     size_t insertIdx = descripters.size();
     if (!parentPath.empty()) {
         string endTag = parent->name + "_END";
@@ -430,11 +417,9 @@ string parentPath = getParentDir(parts);
     descripters.insert(descripters.begin() + insertIdx, d);
     numberOfDescripters++;
 
-    // 6) Mirror in the TreeNode
     auto *fileNode = new TreeNode(parent, newName, /*size=*/0);
     parent->addChild(fileNode);
 
-    // 7) Persist header + updated descriptor list
     file.seekp(0, ios::beg);
     file.write(magic, 4);
     file.write(reinterpret_cast<char*>(&numberOfDescripters), 4);
@@ -449,18 +434,24 @@ string parentPath = getParentDir(parts);
 }
 
 int Wad::writeToFile(const string &path, const char *buffer, int length, int offset) {
-    // 1) Path must refer to a file (even if it's zero‐length)
+
    if (!isContent(path)) return -1;
     auto parts = splitPath(const_cast<string&>(path));
     TreeNode* node = TreeNode::getNode(root, parts);
-    if (!node) return -1;
+    if (!node){
+      cout << "write 1" << endl;
+      return -1;
+      }
 
-    // 2) If it already has contents (either an original lump or a prior write), fail with 0
-    if (node->size > 0) return 0;
-    // we only support offset==0 for brand‑new files
-    if (offset != 0)   return -1;
+    if (node->size > 0){
+      cout << "write 2" << endl;
+      return 0;
+     }
+    if (offset != 0){
+      cout << "write 3" << endl;
+      return -1;
+      }
 
-    // 3) Locate its descriptor in our vector
     size_t descIdx = 0;
     bool found = false;
     for (; descIdx < descripters.size(); ++descIdx) {
@@ -468,11 +459,11 @@ int Wad::writeToFile(const string &path, const char *buffer, int length, int off
             found = true;
             break;
         }
-        // also handle non‑root: compare last part
+
         if (descripters[descIdx].name == parts.back()) {
-            // make sure parent matches
+
             auto pd = getParentDir(parts);
-            // split pd and compare TreeNode
+
             TreeNode* pnode = TreeNode::getNode(root, splitPath(pd));
             if (pnode && pnode->name == node->parent->name) {
                 found = true;
@@ -480,26 +471,25 @@ int Wad::writeToFile(const string &path, const char *buffer, int length, int off
             }
         }
     }
-    if (!found) return -1;
+    if (!found){
+      cout << "write 5" << endl;
+      return -1;
+      }
 
-    // 4) Append the raw bytes just before the descriptor table
     uint32_t writeAt = FlatLumpDescriptors;
     file.seekp(writeAt, ios::beg);
     file.write(buffer, length);
 
-    // 5) Update our in‑memory descriptor + tree
     descripters[descIdx].offset = writeAt;
     descripters[descIdx].size   = length;
     node->size = length;
 
-    // 6) Slide the descriptor table out by 'length'
     FlatLumpDescriptors += length;
     file.seekp(0, ios::beg);
     file.write(magic, 4);
     file.write(reinterpret_cast<char*>(&numberOfDescripters), 4);
     file.write(reinterpret_cast<char*>(&FlatLumpDescriptors), 4);
 
-    // 7) Rewrite the full descriptor list at its new offset
     file.seekp(FlatLumpDescriptors, ios::beg);
     for (auto &ld : descripters) {
         file.write(reinterpret_cast<char*>(&ld.offset), 4);

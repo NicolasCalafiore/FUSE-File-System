@@ -33,11 +33,7 @@ private:
     std::regex START_END_Pattern{R"(^(.+)_START$)"};
 
     std::map<std::string, TreeNode*> pathNodeMap;
-
-    static std::vector<std::string> splitPath(std::string& path);
     static std::string getParentDir(std::vector<std::string> parts);
-    bool isME(const string &name);
-    static bool isSTART(const std::string &name);
 
     static std::string generateEndElement(const std::string &startName);
 
@@ -48,6 +44,11 @@ private:
     Wad(const string &path);
 
 public:
+    bool isME(const string &name);
+    static bool isSTART(const std::string &name);
+    static string getParentDirectory(string path);
+    static std::vector<std::string> splitPath(std::string& path);
+
     static Wad* loadWad(const std::string &path);
 
     std::string getMagic();
@@ -55,7 +56,7 @@ public:
     bool isContent(const std::string& path);
 
     bool isDirectory(const std::string& const_path);
-
+    bool validParentDirectory(string path);
     int getSize(const std::string &path);
 	size_t findDescriptorIndexForPath(const std::vector<std::string>& parts);
     // In libWad.h, inside class libWad:
